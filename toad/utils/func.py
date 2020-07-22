@@ -8,8 +8,10 @@ from functools import wraps
 from multiprocessing import Pool, current_process, cpu_count
 
 
-CONTINUOUS_NUM = 20
+CONTINUOUS_NUM = 10
 FEATURE_THRESHOLD = 1e-7
+NAN_REPLACEMENT = -2e10
+
 
 NAN_LIST = [
     'nan',
@@ -59,6 +61,34 @@ def np_count(arr, value, default = None):
 
     return c
 
+
+def _replace_nan(arr):
+    a = np.copy(arr)
+    a[a == NAN_REPLACEMENT] = np.nan
+    return a
+
+
+def has_nan(arr):
+    return np.any(pd.isna(arr))
+
+
+def np_unique(arr, **kwargs):
+    arr = to_ndarray(arr)
+
+    if not has_nan(arr):
+        return np.unique(arr, **kwargs)
+
+    arr[np.isnan(arr)] = NAN_REPLACEMENT
+
+    res = np.unique(arr, **kwargs)
+
+    if isinstance(res, tuple):
+        u = _replace_nan(res[0])
+        return (u, *res[1:])
+
+    return _replace_nan(res)
+
+
 def to_ndarray(s, dtype = None):
     """
     """
@@ -93,6 +123,10 @@ def bin_by_splits(feature, splits):
     """Bin feature by split points
     """
     feature = fillna(feature)
+
+    if not isinstance(splits, (list, np.ndarray)):
+        splits = [splits]
+    
     return np.digitize(feature, splits)
 
 
@@ -151,7 +185,7 @@ def is_continuous(series):
         return False
 
     n = len(np.unique(series))
-    return n > 20 or n / series.size > 0.5
+    return n > CONTINUOUS_NUM or n / series.size > 0.5
     # return n / series.size > 0.5
 
 
@@ -178,36 +212,6 @@ ALPHABET = string.ascii_uppercase + string.digits
 def generate_str(size = 6, chars = ALPHABET):
     return ''.join(np.random.choice(list(chars), size = size))
 
-
-def support_dataframe(require_target = True):
-    """decorator for supporting dataframe
-    """
-    def decorator(fn):
-        @wraps(fn)
-        def func(frame, *args, **kwargs):
-            if not isinstance(frame, pd.DataFrame):
-                return fn(frame, *args, **kwargs)
-
-            frame = frame.copy()
-            if require_target and isinstance(args[0], str):
-                target = frame.pop(args[0])
-                args = (target,) + args[1:]
-            elif 'target' in kwargs and isinstance(kwargs['target'], str):
-                kwargs['target'] = frame.pop(kwargs['target'])
-
-            res = dict()
-            for col in frame:
-                r = fn(frame[col], *args, **kwargs)
-
-                if not isinstance(r, np.ndarray):
-                    r = [r]
-
-                res[col] = r
-            return pd.DataFrame(res)
-
-        return func
-
-    return decorator
 
 
 def save_json(contents, file, indent = 4):
@@ -311,13 +315,26 @@ def diff_time_frame(base, frame, format = None):
     return res
 
 
+def flatten_columns(columns, sep = '_'):
+    """flatten multiple columns to 1-dim columns joined with '_'
+    """
+    l = []
+    for col in columns:
+        if not isinstance(col, str):
+            col = sep.join(col)
+        
+        l.append(col)
+    
+    return l
+
+
 def bin_to_number(reg = None):
     """
     Returns:
         function: func(string) -> number
     """
     if reg is None:
-        reg = '\d+'
+        reg = r'\d+'
 
     def func(x):
         if pd.isnull(x):
@@ -363,13 +380,28 @@ def generate_target(size, rate = 0.5, weight = None, reverse = False):
     return res
 
 
-def get_dummies(dataframe, exclude = None):
+def get_dummies(dataframe, exclude = None, binary_drop = False, **kwargs):
     """get dummies
     """
     columns = dataframe.select_dtypes(exclude = 'number').columns
 
+    if len(columns) == 0:
+        return dataframe
+
     if exclude is not None:
         columns = columns.difference(exclude)
 
-    data = pd.get_dummies(dataframe, columns = columns)
+    if binary_drop:
+        mask = dataframe[columns].nunique(dropna = False) == 2
+
+        if mask.sum() != 0:
+            dataframe = pd.get_dummies(
+                dataframe,
+                columns = columns[mask],
+                drop_first = True,
+                **kwargs,
+            )
+            columns = columns[~mask]
+
+    data = pd.get_dummies(dataframe, columns = columns, **kwargs)
     return data

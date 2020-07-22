@@ -6,7 +6,7 @@ import pyximport
 
 pyximport.install(setup_args={"include_dirs": np.get_include()})
 
-from toad import merge, ChiMerge, DTMerge, QuantileMerge, StepMerge, KMeansMerge
+from .merge import merge, ChiMerge, DTMerge, QuantileMerge, StepMerge, KMeansMerge
 
 np.random.seed(1)
 feature = np.random.rand(500)
@@ -55,9 +55,9 @@ def test_kmeansmerge():
     assert len(splits) == 9
 
 def test_merge():
-    res = merge(feature, target = target, method = 'chi')
-    assert len(np.unique(res)) == 20
+    res = merge(feature, target = target, method = 'chi', n_bins = 10)
+    assert len(np.unique(res)) == 10
 
 def test_merge_frame():
-    res = merge(df, target = 'target', method = 'chi')
-    assert len(np.unique(res['A'])) == 20
+    res = merge(df, target = 'target', method = 'chi', n_bins = 10)
+    assert len(np.unique(res['A'])) == 10

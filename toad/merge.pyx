@@ -7,14 +7,15 @@ cimport cython
 import pandas as pd
 from sklearn.tree import DecisionTreeClassifier, _tree
 from sklearn.cluster import KMeans
-from .utils import fillna, bin_by_splits, to_ndarray, support_dataframe, clip
+from .utils import fillna, bin_by_splits, to_ndarray, clip
+from .utils.decorator import support_dataframe
 
 from cython.parallel import prange
 from .c_utils cimport c_min, c_sum, c_sum_axis_0, c_sum_axis_1
 
 
 
-DEFAULT_BINS = 20
+DEFAULT_BINS = 10
 
 
 def StepMerge(feature, nan = None, n_bins = None, clip_v = None, clip_std = None, clip_q = None):
@@ -105,7 +106,7 @@ def KMeansMerge(feature, target = None, nan = -1, n_bins = None, random_state = 
 
 
 def DTMerge(feature, target, nan = -1, n_bins = None, min_samples = 1):
-    """Merge continue
+    """Merge by Decision Tree
 
     Args:
         feature (array-like)
@@ -178,8 +179,6 @@ cpdef ChiMerge(feature, target, n_bins = None, min_samples = None,
 
     cdef double [:,:] couple
     cdef double [:] cols, rows, chi_list
-    # cdef long [:] min_ix, drop_ix
-    # cdef long[:] chi_ix
     cdef double chi, chi_min, total, e
     cdef int l, retain_ix, ix
     cdef Py_ssize_t i, j, k, p
@@ -197,7 +196,7 @@ cpdef ChiMerge(feature, target, n_bins = None, min_samples = None,
         l = len(grouped) - 1
         chi_list = np.zeros(l, dtype=np.float)
         chi_min = np.inf
-        # chi_ix = []
+
         for i in range(l):
             chi = 0
             couple = grouped[i:i+2,:]
@@ -225,11 +224,6 @@ cpdef ChiMerge(feature, target, n_bins = None, min_samples = None,
                 chi_min = chi
                 chi_ix = [i]
 
-            # if chi < chi_min:
-            #     chi_min = chi
-
-
-
 
         # break loop when the minimun chi greater the threshold
         if min_threshold and chi_min > min_threshold:
@@ -237,7 +231,6 @@ cpdef ChiMerge(feature, target, n_bins = None, min_samples = None,
 
         # get indexes of the groups who has the minimun chi
         min_ix = np.array(chi_ix)
-        # min_ix = np.where(chi_list == chi_min)[0]
 
         # get the indexes witch needs to drop
         drop_ix = min_ix + 1
@@ -270,7 +263,7 @@ cpdef ChiMerge(feature, target, n_bins = None, min_samples = None,
 def merge(feature, target = None, method = 'dt', return_splits = False, **kwargs):
     """merge feature into groups
 
-    Params:
+    Args:
         feature (array-like)
         target (array-like)
         method (str): 'dt', 'chi', 'quantile', 'step', 'kmeans' - the strategy to be used to merge feature
@@ -282,17 +275,20 @@ def merge(feature, target = None, method = 'dt', return_splits = False, **kwargs
         array: a array of merged label with the same size of feature
         array: list of split points
     """
+    assert method in ['dt', 'chi', 'quantile', 'step', 'kmeans']
+    
     feature = to_ndarray(feature)
+    method = method.lower()
 
-    if method is 'dt':
+    if method == 'dt':
         splits = DTMerge(feature, target, **kwargs)
-    elif method is 'chi':
+    elif method == 'chi':
         splits = ChiMerge(feature, target, **kwargs)
-    elif method is 'quantile':
+    elif method == 'quantile':
         splits = QuantileMerge(feature, **kwargs)
-    elif method is 'step':
+    elif method == 'step':
         splits = StepMerge(feature, **kwargs)
-    elif method is 'kmeans':
+    elif method == 'kmeans':
         splits = KMeansMerge(feature, target = target, **kwargs)
     else:
         splits = np.empty(shape = (0,))

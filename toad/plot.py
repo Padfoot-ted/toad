@@ -1,58 +1,11 @@
-import os
 import numpy as np
 import pandas as pd
-import seaborn as sns
-import matplotlib.pyplot as plt
-from matplotlib.font_manager import FontProperties
 
+from .stats import IV
+from .metrics import AUC
+from .tadpole import tadpole
+from .tadpole.utils import HEATMAP_CMAP, MAX_STYLE, add_annotate, add_text, reset_ylim
 from .utils import unpack_tuple, generate_str
-
-sns.set_palette('muted')
-
-CURRENT_PATH = os.path.abspath(os.path.dirname(__file__))
-FONT_FILE = 'NotoSansCJKsc-Regular.otf'
-FONTS_PATH = os.path.join(CURRENT_PATH, 'fonts', FONT_FILE)
-myfont = FontProperties(fname = os.path.abspath(FONTS_PATH))
-sns.set(font = myfont.get_family())
-
-HEATMAP_CMAP = sns.diverging_palette(240, 10, as_cmap = True)
-MAX_STYLE = 6
-
-
-def get_axes(size = (12, 6)):
-    _, ax = plt.subplots(figsize = size)
-    return ax
-
-def reset_legend(axes):
-    axes.legend(
-        loc='center left',
-        bbox_to_anchor=(1, 0.5),
-        framealpha = 0,
-        prop = myfont,
-    )
-
-    return axes
-
-def reset_ticklabels(axes):
-    labels = []
-    if axes.get_xticklabels():
-        labels += axes.get_xticklabels()
-
-    if axes.get_yticklabels():
-        labels += axes.get_yticklabels()
-
-    for label in labels:
-        label.set_fontproperties(myfont)
-
-    return axes
-
-def fix_axes(axes):
-    functions = [reset_ticklabels, reset_legend]
-
-    for func in functions:
-        func(axes)
-    return axes
-
 
 def badrate_plot(frame, x = None, target = 'target', by = None,
                 freq = None, format = None, return_counts = False,
@@ -71,7 +24,10 @@ def badrate_plot(frame, x = None, target = 'target', by = None,
         return_frame (bool): if need return frame
 
     Returns:
-
+        Axes: badrate plot
+        Axes: counts plot
+        Axes: proportion plot
+        Dataframe: grouping detail data
     """
     frame = frame.copy()
     markers = True
@@ -97,8 +53,12 @@ def badrate_plot(frame, x = None, target = 'target', by = None,
     table = group[target].agg(['sum', 'count']).reset_index()
     table['badrate'] = table['sum'] / table['count']
 
+    # set number dtype to object
+    if np.issubdtype(table[x].dtype, np.number):
+        table[x] = table[x].astype(str)
 
-    rate_plot = sns.lineplot(
+
+    rate_plot = tadpole.lineplot(
         x = x,
         y = 'badrate',
         hue = by,
@@ -107,22 +67,20 @@ def badrate_plot(frame, x = None, target = 'target', by = None,
         legend = 'full',
         markers = markers,
         dashes = False,
-        ax = get_axes(),
     )
 
-    rate_plot = fix_axes(rate_plot)
+    # set y axis start with 0
+    rate_plot.set_ylim(0, None)
+
     res = (rate_plot,)
 
     if return_counts:
-        count_plot = sns.barplot(
+        count_plot = tadpole.barplot(
             x = x,
             y = 'count',
             hue = by,
             data = table,
-            ax = get_axes(),
         )
-
-        count_plot = fix_axes(count_plot)
         res += (count_plot,)
 
 
@@ -132,15 +90,12 @@ def badrate_plot(frame, x = None, target = 'target', by = None,
             mask = (table[x] == v)
             table.loc[mask, 'prop'] = table[mask]['count'] / table[mask]['count'].sum()
 
-        prop_plot = sns.barplot(
+        prop_plot = tadpole.barplot(
             x = x,
             y = 'prop',
             hue = by,
             data = table,
-            ax = get_axes(),
         )
-
-        prop_plot = fix_axes(prop_plot)
         res += (prop_plot,)
 
 
@@ -150,18 +105,20 @@ def badrate_plot(frame, x = None, target = 'target', by = None,
     return unpack_tuple(res)
 
 
-def corr_plot(frame):
+def corr_plot(frame, figure_size = (20, 15)):
     """plot for correlation
 
     Args:
         frame (DataFrame): frame to draw plot
+    Returns:
+        Axes
     """
     corr = frame.corr()
 
     mask = np.zeros_like(corr, dtype = np.bool)
     mask[np.triu_indices_from(mask)] = True
 
-    map_plot = sns.heatmap(
+    map_plot = tadpole.heatmap(
         corr,
         mask = mask,
         cmap = HEATMAP_CMAP,
@@ -173,9 +130,130 @@ def corr_plot(frame):
         linewidths = .5,
         annot = True,
         fmt = '.2f',
-        ax = get_axes(size = (20, 15)),
+        figure_size = figure_size,
     )
 
-    map_plot = fix_axes(map_plot)
-
     return map_plot
+
+
+def proportion_plot(x = None, keys = None):
+    """plot for comparing proportion in different dataset
+
+    Args:
+        x (Series|list): series or list of series data for plot
+        keys (str|list): keys for each data
+
+    Returns:
+        Axes
+    """
+    if not isinstance(x, list):
+        x = [x]
+
+    if keys is None:
+        keys = [
+            x[ix].name
+            if hasattr(x[ix], 'name') and x[ix].name is not None
+            else ix
+            for ix in range(len(x))
+        ]
+    elif isinstance(keys, str):
+        keys = [keys]
+
+    x = map(pd.Series, x)
+    data = pd.concat(x, keys = keys, names = ['keys']).reset_index()
+    data = data.rename(columns = {data.columns[2]: 'value'})
+
+    prop_data = data.groupby('keys')['value'].value_counts(
+        normalize = True,
+        dropna = False,
+    ).rename('proportion').reset_index()
+
+    prop_plot = tadpole.barplot(
+        x = 'value',
+        y = 'proportion',
+        hue = 'keys',
+        data = prop_data,
+    )
+
+    return prop_plot
+
+
+def roc_plot(score, target):
+    """plot for roc
+
+    Args:
+        score (array-like): predicted score
+        target (array-like): true target
+
+    Returns:
+        Axes
+    """
+    auc, fpr, tpr, thresholds = AUC(score, target, return_curve = True)
+
+    ax = tadpole.lineplot(
+        x = fpr,
+        y = tpr,
+    )
+
+    ax.plot([0, 1], [0, 1], color = 'red', linestyle = '--')
+
+    ax = add_text(ax, 'AUC: {:.5f}'.format(auc))
+
+    return ax
+
+
+def bin_plot(frame, x = None, target = 'target', iv = True, annotate_format = ".2f"):
+    """plot for bins
+
+    Args:
+        frame (DataFrame)
+        x (str): column in frame that will be used as x axis
+        target (str): target column in frame
+        iv (bool): if need to show iv in plot
+        annotate_format (str): format str for axis annotation of chart
+
+    Returns:
+        Axes: bins' proportion and badrate plot
+    """
+    frame = frame.copy()
+
+    if not isinstance(target, str):
+        temp_name = generate_str()
+        frame[temp_name] = target
+        target = temp_name
+    
+    
+    group = frame.groupby(x)
+
+    table = group[target].agg(['sum', 'count']).reset_index()
+    table['badrate'] = table['sum'] / table['count']
+    table['prop'] = table['count'] / table['count'].sum()
+
+    prop_ax = tadpole.barplot(
+        x = x,
+        y = 'prop',
+        data = table,
+        color = '#82C6E2',
+    )
+
+    prop_ax = add_annotate(prop_ax, format = annotate_format)
+
+    badrate_ax = prop_ax.twinx()
+    badrate_ax.grid(False)
+
+    badrate_ax = tadpole.lineplot(
+        x = x,
+        y = 'badrate',
+        data = table,
+        color = '#D65F5F',
+        ax = badrate_ax,
+    )
+
+    badrate_ax.set_ylim([0, None])
+    badrate_ax = add_annotate(badrate_ax, format = annotate_format)
+
+    if iv:
+        prop_ax = reset_ylim(prop_ax)
+        prop_ax = add_text(prop_ax, 'IV: {:.5f}'.format(IV(frame[x],frame[target])))
+
+    return prop_ax

@@ -4,46 +4,73 @@ matrix:
       os: linux
       language: python
       python: "3.6"
-      sudo: false
+      sudo: required
+      services:
+        - docker
+      env:
+        - DOCKER_IMAGE=quay.io/pypa/manylinux1_x86_64
+        - PLAT=manylinux1_x86_64
       before_install:
           - sudo apt-get install -y graphviz
       dist: trusty
       before_deploy:
-          - make dist
+          - make dist_manylinux
 
-    - name: "Python 3.7.2 on macOS"
+    - name: "Python 3.7 on macOS"
       os: osx
-      osx_image: xcode10.2
+      osx_image: xcode11.3
       language: shell
+      env:
+        - SUDO=sudo
+        - HOMEBREW_NO_INSTALL_CLEANUP=TRUE
       before_install:
-          - brew install python3 graphviz
+          - brew update
+          # - brew install graphviz
       before_deploy:
           - make dist_wheel
 
-    - name: "Python 3.7.3 on Windows"
+    - name: "Python 3.7 on Windows"
       os: windows
-      language: sh
+      language: shell
       python: "3.7"
-      install:
-          - choco install python3
+      env:
+          - PATH=/c/Python37:/c/Python37/Scripts:$PATH
+      before_install:
+          - choco install python --version=3.7.2
           - choco install graphviz
-          - export PATH="/c/Python37:/c/Python37/Scripts:$PATH"
-          - python3 -m pip install --upgrade pip
-          - pip3 install numpy pytest Cython
-          - pip3 install -e .
-  allow_failures:
-    - os: windows
+          - choco install make
+      before_deploy:
+          - make dist_wheel
+
+    - name: "Python 3.6 on Windows"
+      os: windows
+      language: shell
+      python: "3.6"
+      env:
+          - PATH=/c/Python36:/c/Python36/Scripts:$PATH
+      before_install:
+          - choco install python --version=3.6.8
+          - choco install graphviz
+          - choco install make
+          - pip install -U patsy
+      before_deploy:
+          - make dist_wheel
+
 
 install:
-    - pip3 install numpy pytest Cython
-    - pip3 install -e .
+    - make install
 script:
     - make test
 
 deploy:
-  skip_cleanup: true
-  provider: script
-  script: make upload
-  on:
-    tags: true
-    repo: amphibian-dev/toad
+  - skip_cleanup: true
+    provider: script
+    script: make upload
+    on:
+      tags: true
+
+  - skip_cleanup: true
+    provider: script
+    script: make upload
+    on:
+      branch: release

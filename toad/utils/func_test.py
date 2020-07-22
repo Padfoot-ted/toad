@@ -2,13 +2,16 @@ import pytest
 import numpy as np
 import pandas as pd
 
-from toad.utils import (
+from .func import (
+    np_unique,
     fillna,
     clip,
     diff_time_frame,
     bin_to_number,
     generate_target,
     generate_str,
+    get_dummies,
+    feature_splits,
 )
 
 np.random.seed(1)
@@ -22,10 +25,21 @@ def test_fillna():
     assert res[3] == -1
 
 
+def test_np_unique():
+    res = np_unique(np.array([np.nan, np.nan, np.nan]))
+    assert len(res) == 1
+
+
 def test_clip():
     res1 = clip(feature, quantile = (.05, .95))
     res2 = clip(feature, quantile = 0.05)
     assert np.testing.assert_array_equal(res1, res2) is None
+
+
+def test_feature_splits():
+    value = feature_splits(feature, target)
+    assert len(value) == 243
+
 
 def test_diff_time_frame():
     time_data = [
@@ -98,3 +112,13 @@ def test_generate_target():
 def test_generate_str():
     s = generate_str(size = 8)
     assert s == 'EPL5MTQK'
+
+def test_get_dummies_binary():
+    ab = np.array(list('ABCDEFG'))
+    df = pd.DataFrame({
+        'binary': ab[np.random.choice(2, 500)],
+        'multiple': ab[np.random.choice(5, 500)],
+    })
+    data = get_dummies(df, binary_drop = True)
+    
+    assert 'binary_A' not in data.columns
